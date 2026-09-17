@@ -157,6 +157,11 @@
   .score-pop{position:absolute; font-weight:900; font-size:15px; pointer-events:none; z-index:4;
     text-shadow:0 0 8px currentColor; animation:floatUp .8s ease-out forwards;}
   @keyframes floatUp{from{transform:translateY(0); opacity:1;} to{transform:translateY(-26px); opacity:0;}}
+  /* 手机端：关掉毛玻璃滤镜（触屏设备上每帧合成的开销很大，是卡顿隐形杀手） */
+  @media (pointer: coarse){
+    .wrap{ backdrop-filter:none; }
+    .overlay{ backdrop-filter:none; background:rgba(255,238,246,.95); }
+  }
 </style>
 </head>
 <body data-page-node-id="jBJVXFleAFYfcWwPSN1WFb">
@@ -237,7 +242,7 @@
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   // 关键：设置 canvas 内部分辨率并做 DPR 缩放，否则默认 300x150 会把蛇画到画布外
-  const DPR = Math.min(window.devicePixelRatio || 1, 1.5);
+  const DPR = Math.min(window.devicePixelRatio || 1, (Math.min(screen.width, screen.height) < 420 ? 1.25 : 1.5));
   canvas.width = LOGICAL * DPR;
   canvas.height = LOGICAL * DPR;
   ctx.scale(DPR, DPR);
@@ -466,7 +471,7 @@
     obstacles = [];
     score = 0; level = 1; foodsEaten = 0; multiplier = 1;
     milestoneIdx = 0;
-    moveInterval = 270; acc = 0; powerTimer = 0;
+    moveInterval = 240; acc = 0; powerTimer = 0;
     invincibleT = speedT = doubleT = 0; eatT = 0;
     particles = [];
     foods = []; powerup = null; ensureFoods();
@@ -965,10 +970,16 @@
     requestAnimationFrame(loop);
   }
 
-  // 输入：方向入队，支持快速连续转向
+  // 输入：方向入队，支持快速连续转向；队列空闲时立即转向（消除"慢半拍"）
   function queueDir(x,y){
     if(state!=='playing') return;
-    const last = dirQueue.length ? dirQueue[dirQueue.length-1] : dir;
+    if(dirQueue.length===0){
+      if(x===dir.x && y===dir.y) return;      // 同向忽略
+      if(x===-dir.x && y===-dir.y) return;    // 禁止 180° 反向
+      dir = {x,y};                            // 立即生效，下一步就走新方向
+      return;
+    }
+    const last = dirQueue[dirQueue.length-1];
     if(x===-last.x && y===-last.y) return; // 禁止 180° 反向
     if(x===last.x && y===last.y) return;   // 同向忽略
     if(dirQueue.length<3) dirQueue.push({x,y});
@@ -986,7 +997,7 @@
   });
 
   // 触屏：拖动即转向，更跟手（支持一次连续拖动画出 L 形）
-  const SWIPE_MIN = 14;
+  const SWIPE_MIN = 6;
   let tAnchor=null, tStart=null, tMoved=false;
   canvas.addEventListener('touchstart',e=>{
     tStart={x:e.touches[0].clientX,y:e.touches[0].clientY};
