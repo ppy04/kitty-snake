@@ -192,6 +192,7 @@
           <span data-page-node-id="uvs25K9wGA3t8aiVRc1uTU"><i data-page-node-id="SX7Itr1Co6OumC0tbLvE7V" class="dot" style="color:#ffd23d; background:#ffd23d"></i><!--pnid:WdxuiaxbqjlU0HqjjoPafq-->黄金球 +30</span>
           <span data-page-node-id="HCi2DWLlgy8kBMtHJICK0q"><i data-page-node-id="RXPgbBVh0jl9DuNO74IaJF" class="dot" style="color:#c08bff; background:#c08bff"></i><!--pnid:PX65fNz9FKf53omYBYxrVM-->⚡ 加速</span>
           <span data-page-node-id="ACHA4VbqnLWFyZBMVzJW4K"><i data-page-node-id="4zs4EcInuxhTo4MlP8w6LW" class="dot" style="color:#ffb3d9; background:#ffb3d9"></i><!--pnid:RnC739OwtjZDbDmF0pkfYq-->🛡 护盾</span>
+          <span data-page-node-id="UOMZQdmYSIQ1Y6cKZk5qZZ"><i data-page-node-id="QWgIg9AcVhQ0eQJtmufdWD" class="dot" style="color:#ff9a4d; background:#ff9a4d"></i><!--pnid:0rjlccChDEKPO966Oi1GpX-->🍣 三文鱼 +50</span>
           <span data-page-node-id="UOMZQdmYSIQ1Y6cKZk5qZZ"><i data-page-node-id="QWgIg9AcVhQ0eQJtmufdWD" class="dot" style="color:#ff5fa2; background:#ff5fa2"></i><!--pnid:0rjlccChDEKPO966Oi1GpX-->✨ 双倍</span>
         </div>
         <button data-page-node-id="JynOYx3TPkuurOZMEq63DW" class="btn" id="startBtn"><!--pnid:hpTAY43ObHi88CHpadd3Wh-->🎮 开始游戏</button>
@@ -236,7 +237,7 @@
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   // 关键：设置 canvas 内部分辨率并做 DPR 缩放，否则默认 300x150 会把蛇画到画布外
-  const DPR = Math.min(window.devicePixelRatio || 1, 2);
+  const DPR = Math.min(window.devicePixelRatio || 1, 1.5);
   canvas.width = LOGICAL * DPR;
   canvas.height = LOGICAL * DPR;
   ctx.scale(DPR, DPR);
@@ -336,6 +337,29 @@
     }
   }
 
+  // ---- 猫头缓存：每种表情只画一次存成位图，之后每帧直接"盖章"（性能优化的关键） ----
+  const HEAD_GX0 = -12, HEAD_GX1 = 13, HEAD_GY0 = -11, HEAD_GY1 = 9;
+  const headCache = {};
+  function getHeadBitmap(sk, variant){
+    const key = (sk.name||'cat') + '#' + variant;
+    let bm = headCache[key];
+    if(!bm){
+      const u = BASE*0.072;
+      const w = Math.ceil((HEAD_GX1-HEAD_GX0+2)*u), h = Math.ceil((HEAD_GY1-HEAD_GY0+2)*u);
+      const cv = document.createElement('canvas');
+      cv.width = w*2; cv.height = h*2;          // 2x 分辨率，缩放绘制也不糊
+      const g = cv.getContext('2d');
+      g.scale(2,2);
+      const opts = variant==='chew1' ? {eating:true, chomp:1}
+                 : variant==='chew2' ? {eating:true, chomp:0}
+                 : {eating:false};
+      drawPixelHead(g, -HEAD_GX0*u, -HEAD_GY0*u, u, sk, opts);
+      bm = { cv: cv, w: w, h: h, ox: HEAD_GX0*u, oy: HEAD_GY0*u };
+      headCache[key] = bm;
+    }
+    return bm;
+  }
+
   function drawCatPick(cv, sk){
     const size = 52, dpr = Math.min(window.devicePixelRatio || 1, 2);
     cv.width = size*dpr; cv.height = size*dpr;
@@ -373,7 +397,10 @@
   // 状态
   let state = 'menu'; // menu | playing | paused | over
   let snake, dir, dirQueue, foods, powerup, obstacles, powerTimer;
+  let prevSnake = [];              // 上一步的蛇身（用于移动插值，让滑行丝滑）
   let score, level, foodsEaten, multiplier, moveInterval, acc, lastTime;
+  const MILESTONES = [50, 100, 200, 300, 500, 800, 1000, 1500, 2000];   // 里程碑分数线
+  let milestoneIdx = 0;
   let invincibleT, speedT, doubleT;       // 各效果剩余时间(ms)
   let particles = [];
   let soundOn = true;
@@ -419,7 +446,8 @@
 
   function spawnFood(){
     const f = randEmpty();
-    f.gold = Math.random() < 0.18;
+    f.gold = Math.random() < 0.14;
+    f.fish = !f.gold && Math.random() < 0.10;   // 稀有三文鱼：+50 分
     foods.push(f);
   }
   function ensureFoods(){ while(foods.length < FOOD_TARGET) spawnFood(); }
@@ -437,10 +465,12 @@
     dir = {x:1,y:0}; dirQueue = [];
     obstacles = [];
     score = 0; level = 1; foodsEaten = 0; multiplier = 1;
+    milestoneIdx = 0;
     moveInterval = 270; acc = 0; powerTimer = 0;
     invincibleT = speedT = doubleT = 0; eatT = 0;
     particles = [];
     foods = []; powerup = null; ensureFoods();
+    prevSnake = [];
     updateHUD();
   }
 
@@ -493,6 +523,7 @@
   }
 
   function step(){
+    prevSnake = snake.map(s=>({x:s.x, y:s.y}));   // 记录旧位置，供插值绘制
     if(dirQueue.length) dir = dirQueue.shift();
     let nx = snake[0].x + dir.x;
     let ny = snake[0].y + dir.y;
@@ -513,17 +544,27 @@
     snake.unshift(head);
     if(willGrow){
       const f = foods[eatIdx];
-      const gain = f.gold ? 30 : 10;
+      const gain = f.gold ? 30 : f.fish ? 50 : 10;
       const add = gain*multiplier;
       score += add;
       if(score>highScore){ highScore=score; localStorage.setItem(HS_KEY,String(highScore)); }
-      popScore(f.x,f.y,add, f.gold?'#ffd23d':'#ff7ab3');
-      burst(f.x,f.y, f.gold?'#ffd23d':'#ff7ab3', f.gold?18:10, 3);
+      popScore(f.x,f.y,add, f.gold?'#ffd23d':f.fish?'#ff9a4d':'#ff7ab3');
+      burst(f.x,f.y, f.gold?'#ffd23d':f.fish?'#ff9a4d':'#ff7ab3', f.gold?18:12, 3);
       f.gold ? sfx.gold() : sfx.eat();
       eatT = EAT_MS;                 // 触发"吧唧嘴"表情
       foods.splice(eatIdx,1);
       foodsEaten++;
       if(foodsEaten>=5) levelUp();
+
+      // 里程碑：分数达到整数关，放彩带庆祝
+      while(milestoneIdx < MILESTONES.length && score >= MILESTONES[milestoneIdx]){
+        const m = MILESTONES[milestoneIdx++];
+        showBadge('🏆 里程碑达成：' + m + ' 分！');
+        ['#ffd23d','#ff5fa2','#c08bff','#4dd2ff'].forEach((c,k)=>
+          burst(head.x, head.y, c, 14, 3.5+k*0.4));
+        sfx.level();
+      }
+
       ensureFoods();
     } else {
       snake.pop();
@@ -582,15 +623,27 @@
       const cx=(f.x+0.5)*BASE, cy=(f.y+0.5)*BASE;
       const r = BASE*0.40 + Math.sin(t)*1.8;
       ctx.save();
+      // 光晕用半透明大圆代替 shadowBlur（滤镜是每帧最贵的操作之一，卡顿元凶二号）
       if(f.gold){
-        ctx.shadowBlur=18; ctx.shadowColor='#ffd23d'; ctx.fillStyle='rgba(255,210,61,.92)';
+        ctx.fillStyle='rgba(255,210,61,.22)';
+        ctx.beginPath(); ctx.arc(cx,cy,r*1.55,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='rgba(255,210,61,.92)';
         ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
-        ctx.shadowBlur=0; ctx.font=(BASE*0.56)+'px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.font=(BASE*0.56)+'px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
         ctx.fillText('⭐', cx, cy+1);
-      } else {
-        ctx.shadowBlur=18; ctx.shadowColor='#ff7ab3'; ctx.fillStyle='rgba(255,122,179,.92)';
+      } else if(f.fish){
+        ctx.fillStyle='rgba(255,150,80,.22)';
+        ctx.beginPath(); ctx.arc(cx,cy,r*1.55,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='rgba(255,150,80,.94)';
         ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
-        ctx.shadowBlur=0; ctx.font=(BASE*0.56)+'px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.font=(BASE*0.56)+'px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText('🍣', cx, cy+1);
+      } else {
+        ctx.fillStyle='rgba(255,122,179,.20)';
+        ctx.beginPath(); ctx.arc(cx,cy,r*1.55,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='rgba(255,122,179,.92)';
+        ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+        ctx.font=(BASE*0.56)+'px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
         ctx.fillText('💗', cx, cy+1);
       }
       ctx.restore();
@@ -599,7 +652,9 @@
     if(powerup){
       const cx=(powerup.x+0.5)*BASE, cy=(powerup.y+0.5)*BASE;
       const col = powerup.type==='speed'?'#c08bff':powerup.type==='shield'?'#ffb3d9':'#ff5fa2';
-      ctx.save(); ctx.shadowBlur=16; ctx.shadowColor=col; ctx.fillStyle=col;
+      ctx.save(); ctx.fillStyle='rgba(255,255,255,.18)';
+      ctx.beginPath(); ctx.arc(cx,cy,BASE*0.55,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle=col;
       ctx.beginPath(); ctx.arc(cx,cy,BASE*0.38,0,Math.PI*2); ctx.fill(); ctx.restore();
       ctx.fillStyle='#04101f'; ctx.font='bold '+(BASE*0.42)+'px sans-serif';
       ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -608,40 +663,46 @@
     // ===== 一只连续圆润的小可爱（身体不再是方格）+ 专属尾巴 + 圆脸 =====
     const colA = skin.a, colB = skin.b;
     const total = snake.length;
-    const hd = snake[0], tailCell = snake[total-1];
     const eating = eatT > 0;
     const chomp = eating ? Math.abs(Math.sin((1-eatT/EAT_MS)*Math.PI*3)) : 0;
+
+    // 移动插值：蛇在两个格子之间平滑滑行，而不是瞬移（丝滑的关键）
+    const interval = speedT>0 ? moveInterval*0.55 : moveInterval;
+    const it = (state==='playing' && prevSnake.length) ? Math.min(1, acc/interval) : 1;
+    const cellPos = i => {
+      const cur = snake[i];
+      const prev = prevSnake[i] || cur;
+      let dx = cur.x - prev.x, dy = cur.y - prev.y;
+      if(Math.abs(dx)>1 || Math.abs(dy)>1){ dx=0; dy=0; }   // 穿墙瞬移不插值
+      return { x:(prev.x + dx*it + 0.5)*BASE, y:(prev.y + dy*it + 0.5)*BASE };
+    };
+    const hdP = cellPos(0), tlP = cellPos(total-1);
 
     // 1) 身体：沿各节中心连成一条粗圆线，先描边再上色 → 看起来是一条，不是一格一格
     if(total > 1){
       const bodyPath = ()=>{
         ctx.beginPath();
-        ctx.moveTo((hd.x+0.5)*BASE, (hd.y+0.5)*BASE);
-        for(let i=1;i<total;i++) ctx.lineTo((snake[i].x+0.5)*BASE, (snake[i].y+0.5)*BASE);
+        ctx.moveTo(hdP.x, hdP.y);
+        for(let i=1;i<total;i++){ const p = cellPos(i); ctx.lineTo(p.x, p.y); }
       };
-      const grad = ctx.createLinearGradient(
-        (hd.x+0.5)*BASE,(hd.y+0.5)*BASE,
-        (tailCell.x+0.5)*BASE,(tailCell.y+0.5)*BASE);
+      const grad = ctx.createLinearGradient(hdP.x,hdP.y,tlP.x,tlP.y);
       grad.addColorStop(0, colA); grad.addColorStop(1, colB);
 
       ctx.save();
       ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-      ctx.shadowColor = mix(colA,colB,0.55); ctx.shadowBlur = 12;
       ctx.strokeStyle = skin.line; ctx.lineWidth = BASE*0.87; bodyPath(); ctx.stroke();
-      ctx.shadowBlur = 0;
       ctx.strokeStyle = grad;      ctx.lineWidth = BASE*0.83; bodyPath(); ctx.stroke();
       ctx.restore();
     }
 
     // 2) 尾巴：三种角色各有各的尾巴
     if(total > 2){
-      const s = snake[total-1], p = snake[total-2];
+      const sP = tlP, pP = cellPos(total-2);
       const tc = mix(colA,colB,0.9);
       ctx.save();
-      ctx.translate((s.x+0.5)*BASE, (s.y+0.5)*BASE);
-      ctx.rotate(Math.atan2(s.y-p.y, s.x-p.x));   // 尾巴朝着身后长出去
+      ctx.translate(sP.x, sP.y);
+      ctx.rotate(Math.atan2(sP.y-pP.y, sP.x-pP.x));   // 尾巴朝着身后长出去
       ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-      ctx.shadowColor = tc; ctx.shadowBlur = 8;
       if(skin.tail === 'pom'){
         // 米菲兔：一颗毛球尾巴——由一个个小圆堆出来的
         ctx.fillStyle = '#fff'; ctx.strokeStyle = skin.line; ctx.lineWidth = 1.4;
@@ -661,54 +722,47 @@
         ctx.fillStyle = '#fffdf6';
         ctx.beginPath(); ctx.arc(BASE*0.34, -BASE*0.40, BASE*0.16, 0, Math.PI*2); ctx.fill();
       } else {
-        // Kitty：轻盈柔滑的渐细尾巴（分段曲线，自然收窄）+ 尾尖轻摆动画 + 小巧圆爪
-        // 注意：尾根要避开身体端盖（约 0.44*BASE），否则会盖出浅色鬼影
-        const sway = Math.sin(performance.now()/300) * BASE*0.10;   // 尾尖轻轻摇
+        // Kitty：虚空飘尾——细线、半透明、越往尾尖越淡，像一缕烟随风轻摆
+        const sway = Math.sin(performance.now()/260) * BASE*0.22;
         const T = q => [
-          BASE*0.34 + q*BASE*0.54,
-          -Math.sin(q*Math.PI*0.9)*BASE*0.15 - q*q*BASE*0.10 + sway*q
+          BASE*0.30 + q*BASE*0.62,
+          -Math.sin(q*Math.PI*1.1)*BASE*0.20
+          - q*q*BASE*0.06
+          + Math.sin(q*4.5 + performance.now()/280)*BASE*0.07*q   // 沿尾巴传播的小波浪
+          + sway*q
         ];
-        const drawTail = (pad, color)=>{
-          const SEG = 8;
+        const drawGhost = (pad, color, alpha)=>{
+          const SEG = 10;
           ctx.strokeStyle = color; ctx.lineCap = 'round';
           for(let i=0;i<SEG;i++){
             const q0 = i/SEG, q1 = (i+1)/SEG;
             const a = T(q0), b = T(q1);
-            ctx.lineWidth = BASE*(0.30 - 0.21*q1) + pad*2;
+            ctx.globalAlpha = alpha*(1 - q1*0.88);      // 越靠尾尖越透明
+            ctx.lineWidth = BASE*(0.20 - 0.16*q1) + pad*2;
             ctx.beginPath(); ctx.moveTo(a[0], a[1]);
             ctx.quadraticCurveTo((a[0]+b[0])/2, (a[1]+b[1])/2, b[0], b[1]);
             ctx.stroke();
           }
+          ctx.globalAlpha = 1;
         };
-        drawTail(1.2, skin.line);
-        drawTail(0, tc);
-
-        // 小巧圆爪：跟着尾尖走的小圆爪，粉色肉垫 + 两个趾豆，比旧版小一圈更柔和
-        const tip = T(1), px = tip[0] + BASE*0.10;
-        const pawC = mix(tc, '#ffffff', 0.3);
-        ctx.fillStyle = pawC; ctx.strokeStyle = skin.line; ctx.lineWidth = 1.2;
-        ctx.beginPath(); ctx.arc(px, tip[1], BASE*0.14, 0, Math.PI*2);
-        ctx.fill(); ctx.stroke();
-        ctx.fillStyle = '#f0699e';
-        ctx.beginPath(); ctx.ellipse(px, tip[1] + BASE*0.02, BASE*0.07, BASE*0.055, 0, 0, Math.PI*2); ctx.fill();
-        [-1, 1].forEach(tx=>{
-          ctx.beginPath(); ctx.arc(px + tx*BASE*0.06, tip[1] - BASE*0.07, BASE*0.028, 0, Math.PI*2); ctx.fill();
-        });
+        drawGhost(1.0, skin.line, 0.45);
+        drawGhost(0, tc, 0.8);
       }
       ctx.restore();
     }
 
-    // 3) 头：像素风 Kitty 脸（块状+阶梯耳+胡须），永远正对玩家
+    // 3) 头：从缓存盖章（原先是每帧现场画 ~500 个方块，那就是卡顿元凶）
     {
-      const u = BASE*0.072*(1 + 0.06*chomp);
-      drawPixelHead(ctx, (hd.x+0.5)*BASE, (hd.y+0.5)*BASE + u*0.5, u, skin, { eating: eating, chomp: chomp });
+      const s = 1 + 0.06*chomp;
+      const variant = !eating ? 'normal' : (chomp > 0.5 ? 'chew1' : 'chew2');
+      const bm = getHeadBitmap(skin, variant);
+      ctx.drawImage(bm.cv, hdP.x + bm.ox*s, hdP.y + bm.oy*s, bm.w*s, bm.h*s);
     }
 
     // 无敌光环
     if(invincibleT>0){
-      const s=snake[0]; const cx=(s.x+0.5)*BASE, cy=(s.y+0.5)*BASE;
       ctx.save(); ctx.strokeStyle='rgba(255,179,217,'+(0.4+0.4*Math.sin(performance.now()/120))+')';
-      ctx.lineWidth=3; ctx.beginPath(); ctx.arc(cx,cy,BASE*0.7,0,Math.PI*2); ctx.stroke(); ctx.restore();
+      ctx.lineWidth=3; ctx.beginPath(); ctx.arc(hdP.x,hdP.y,BASE*0.7,0,Math.PI*2); ctx.stroke(); ctx.restore();
     }
     // 粒子
     particles.forEach(p=>{
