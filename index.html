@@ -661,40 +661,38 @@
         ctx.fillStyle = '#fffdf6';
         ctx.beginPath(); ctx.arc(BASE*0.34, -BASE*0.40, BASE*0.16, 0, Math.PI*2); ctx.fill();
       } else {
-        // Kitty：短短毛尾巴，末端是一只猫爪——圆爪 + 三条趾缝 + 粉色肉垫
+        // Kitty：轻盈柔滑的渐细尾巴（分段曲线，自然收窄）+ 尾尖轻摆动画 + 小巧圆爪
         // 注意：尾根要避开身体端盖（约 0.44*BASE），否则会盖出浅色鬼影
-        const N = 4;
-        const pt = q => [ BASE*0.40 + q*BASE*0.20, -Math.pow(q,1.5)*BASE*0.14 ];
-        const pts = []; for(let i=0;i<=N;i++) pts.push(pt(i/N));
-        const fluff = (pad, color)=>pts.forEach((w,i)=>{
-          const q=i/N, o=BASE*(0.20-0.06*q)+pad;
-          ctx.fillStyle = color;
-          ctx.fillRect(w[0]-o/2, w[1]-o/2, o, o);
-        });
-        fluff(2, skin.line);
-        fluff(0, tc);
+        const sway = Math.sin(performance.now()/300) * BASE*0.10;   // 尾尖轻轻摇
+        const T = q => [
+          BASE*0.34 + q*BASE*0.54,
+          -Math.sin(q*Math.PI*0.9)*BASE*0.15 - q*q*BASE*0.10 + sway*q
+        ];
+        const drawTail = (pad, color)=>{
+          const SEG = 8;
+          ctx.strokeStyle = color; ctx.lineCap = 'round';
+          for(let i=0;i<SEG;i++){
+            const q0 = i/SEG, q1 = (i+1)/SEG;
+            const a = T(q0), b = T(q1);
+            ctx.lineWidth = BASE*(0.30 - 0.21*q1) + pad*2;
+            ctx.beginPath(); ctx.moveTo(a[0], a[1]);
+            ctx.quadraticCurveTo((a[0]+b[0])/2, (a[1]+b[1])/2, b[0], b[1]);
+            ctx.stroke();
+          }
+        };
+        drawTail(1.2, skin.line);
+        drawTail(0, tc);
 
-        // 猫爪：像素圆爪（比尾巴亮一档，轮廓更清楚）
-        const v = BASE*0.085, cx0 = BASE*0.76, cy0 = -BASE*0.06;
-        const pawC = mix(tc, '#ffffff', 0.22);
-        const inPaw = (gx,gy)=>{ const X=(gx+0.5)/4.4, Y=(gy+0.5)/4.0; return X*X+Y*Y<=1; };
-        const solidP = (gx,gy)=> inPaw(gx-1,gy)&&inPaw(gx+1,gy)&&inPaw(gx,gy-1)&&inPaw(gx,gy+1);
-        for(let gy=-5;gy<=4;gy++) for(let gx=-5;gx<=5;gx++){
-          if(!inPaw(gx,gy)) continue;
-          ctx.fillStyle = solidP(gx,gy) ? pawC : skin.line;
-          ctx.fillRect(cx0+gx*v, cy0+gy*v, v, v);
-        }
-        // 三条趾缝：从趾缘往里的描边色小竖条
-        [-2,0,2].forEach(tx=>{
-          ctx.fillStyle = skin.line;
-          ctx.fillRect(cx0+tx*v-v*0.5, cy0-4.6*v, v, 2.4*v);
-        });
-        // 粉色肉垫 + 三个小趾豆（固定粉色，三只 Kitty 通用）
-        const padC = '#f0699e';
-        ctx.fillStyle = padC;
-        ctx.beginPath(); ctx.ellipse(cx0, cy0+1.6*v, 2.1*v, 1.6*v, 0, 0, Math.PI*2); ctx.fill();
-        [-2,0,2].forEach(tx=>{
-          ctx.beginPath(); ctx.arc(cx0+tx*v, cy0-1.4*v, 0.55*v, 0, Math.PI*2); ctx.fill();
+        // 小巧圆爪：跟着尾尖走的小圆爪，粉色肉垫 + 两个趾豆，比旧版小一圈更柔和
+        const tip = T(1), px = tip[0] + BASE*0.10;
+        const pawC = mix(tc, '#ffffff', 0.3);
+        ctx.fillStyle = pawC; ctx.strokeStyle = skin.line; ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.arc(px, tip[1], BASE*0.14, 0, Math.PI*2);
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#f0699e';
+        ctx.beginPath(); ctx.ellipse(px, tip[1] + BASE*0.02, BASE*0.07, BASE*0.055, 0, 0, Math.PI*2); ctx.fill();
+        [-1, 1].forEach(tx=>{
+          ctx.beginPath(); ctx.arc(px + tx*BASE*0.06, tip[1] - BASE*0.07, BASE*0.028, 0, Math.PI*2); ctx.fill();
         });
       }
       ctx.restore();
